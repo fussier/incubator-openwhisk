@@ -20,8 +20,8 @@ package common
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 
-import whisk.common.Logging
-import whisk.common.PrintStreamLogging
+import org.apache.openwhisk.common.Logging
+import org.apache.openwhisk.common.PrintStreamLogging
 import java.nio.charset.StandardCharsets
 
 /**
@@ -35,5 +35,5 @@ trait StreamLogging {
   lazy val printstream = new PrintStream(stream)
   implicit lazy val logging: Logging = new PrintStreamLogging(printstream)
 
-  def logLines = new String(stream.toByteArray, StandardCharsets.UTF_8).lines.toList
+  def logLines = new String(stream.toByteArray, StandardCharsets.UTF_8).linesIterator.toList
 }

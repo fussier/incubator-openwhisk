@@ -1,18 +1,19 @@
 <!--
 #
-# Licensed to the Apache Software Foundation (ASF) under one or more contributor 
-# license agreements.  See the NOTICE file distributed with this work for additional 
-# information regarding copyright ownership.  The ASF licenses this file to you
-# under the Apache License, Version 2.0 (the # "License"); you may not use this 
-# file except in compliance with the License.  You may obtain a copy of the License 
-# at:
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
 #
-# http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software distributed 
-# under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR 
-# CONDITIONS OF ANY KIND, either express or implied.  See the License for the
-# specific language governing permissions and limitations under the License.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 #
 -->
 
@@ -22,7 +23,7 @@ Before you can build and deploy OpenWhisk, you must configure a backing data sto
 
 ## Using CouchDB
 
-If you are using your own installation of CouchDB, make a note of the host, port, username and password. Then provision a [custom Vagrant box](../vagrant/README.md) by following the instructions for a persistent CouchDB. In case you already have a Vagrant box, maybe using default settings you can simply adjust the existing db settings. Within your `openwhisk/ansible` directory, edit the file `db_local.ini` as appropriate. If you do not find `db_local.ini`, refer to [Setup](../../ansible/README.md#setup) to create it. Note that:
+If you are using your own installation of CouchDB, make a note of the host, port, username and password, and adjust the properties in `openwhisk/ansible/db_local.ini` accordingly. If you do not find `db_local.ini`, refer to [Setup](../../ansible/README.md#setup) to create it. Note that:
 
    * the username must have administrative rights
    * the CouchDB instance must be accessible over `http` or `https` (the latter requires a valid certificate)
@@ -35,16 +36,14 @@ To try out OpenWhisk without managing your own CouchDB installation, you can sta
   * you will need to run `ansible-playbook couchdb.yml` every time you `clean` or `teardown` the system (see below)
   * you will need to initialize the data store each time (`ansible-playbook initdb.yml`, see below)
 
-Detailed instructions are found in the [ansible readme](../../ansible/README.md).
+Detailed instructions are found in the [Ansible README](../../ansible/README.md).
 
 ## Using Cloudant
 
-As an alternative to a self-managed CouchDB, you may want to try [Cloudant](https://cloudant.com) which is a cloud-based database service. 
-There are two ways to get a Cloudant account and configure OpenWhisk to use it. 
-You only need to establish an account once, either through IBM Bluemix or with Cloudant directly. 
+As an alternative to a self-managed CouchDB, you may want to try [Cloudant](https://cloudant.com) which is a cloud-based database service.
 
-### Create a Cloudant account via IBM Bluemix
-Sign up for an account via [IBM Bluemix](https://bluemix.net). Bluemix offers trial accounts and its signup process is straightforward so it is not described here in detail. Using Bluemix, the most convenient way to create a Cloudant instance is via the `cf` command-line tool. See [here](https://www.ng.bluemix.net/docs/starters/install_cli.html) for instructions on how to download and configure `cf` to work with your Bluemix account.
+### Create a Cloudant account via IBM Cloud
+Sign up for an account via [IBM Cloud](https://cloud.ibm.com). IBM Cloud offers trial accounts and its signup process is straightforward so it is not described here in detail. Using IBM Cloud, the most convenient way to create a Cloudant instance is via the `cf` command-line tool. See [here](https://cloud.ibm.com/docs/starters/install_cli.html) for instructions on how to download and configure `cf` to work with your IBM Cloud account.
 
 When `cf` is set up, issue the following commands to create a Cloudant database.
 
@@ -61,16 +60,9 @@ When `cf` is set up, issue the following commands to create a Cloudant database.
 
 Make note of the Cloudant `username` and `password` from the last `cf` command so you can create the required `db_local.ini`.
 
-### Create a Cloudant account directly with Cloudant
-
-As an alternative to IBM Bluemix, you may sign up for an account with [Cloudant](https://cloudant.com) directly. Cloudant is free to try and offers a metered pricing where the first $50 of usage is free each month. The signup process is straightforward so it is not described here in detail.
-Once you have created a Cloudant account, make note of the account `username` and `password` from the Cloudant dashboard, so you can create the required `db_local.ini`.
-
 ### Setting the Cloudant credentials
 
-Provision a [custom Vagrant box](../vagrant/README.md) by following the instructions for Cloudant.
-
-If you already have an existing box, you can simply modify the settings in the VM. Within your `openwhisk/ansible` directory, edit the file `db_local.ini` as appropriate.
+Edit the file `openwhisk/ansible/db_local.ini` to provide the required database properties.
 
 Note that:
 
@@ -89,7 +81,7 @@ If you are [using an ephemeral CouchDB container](#using-an-ephemeral-couchdb-co
   ```
   # Work out of your openwhisk directory
   cd /your/path/to/openwhisk/ansible
-  
+
   # Initialize data store containing authorization keys
   ansible-playbook initdb.yml
   ```

@@ -17,12 +17,12 @@
 
 package system.rest
 
+import akka.http.scaladsl.model.Uri
+
 import scala.util.Try
-
-import com.jayway.restassured.RestAssured
-import com.jayway.restassured.config.RestAssuredConfig
-import com.jayway.restassured.config.SSLConfig
-
+import io.restassured.RestAssured
+import io.restassured.config.RestAssuredConfig
+import io.restassured.config.SSLConfig
 import common.WhiskProperties
 import spray.json._
 
@@ -31,11 +31,19 @@ import spray.json._
  */
 trait RestUtil {
 
+  private val skipKeyStore = WhiskProperties.isSSLCheckRelaxed
   private val trustStorePassword = WhiskProperties.getSslCertificateChallenge
 
   // force RestAssured to allow all hosts in SSL certificates
-  protected val sslconfig = {
-    new RestAssuredConfig().sslConfig(new SSLConfig().keystore("keystore", trustStorePassword).allowAllHostnames())
+  val sslconfig = {
+    val inner = new SSLConfig().allowAllHostnames()
+    val config = if (!skipKeyStore && trustStorePassword != null) {
+      inner.keyStore("keystore", trustStorePassword)
+      inner.trustStore("keystore", trustStorePassword)
+    } else {
+      inner.relaxedHTTPSValidation()
+    }
+    new RestAssuredConfig().sslConfig(config)
   }
 
   /**
@@ -49,9 +57,17 @@ trait RestUtil {
    * @return the URL and port for the whisk service using the main router or the edge router ip address
    */
   def getServiceURL(): String = {
-    val apiPort = WhiskProperties.getEdgeHostApiPort()
-    val protocol = if (apiPort == 443) "https" else "http"
-    protocol + "://" + WhiskProperties.getEdgeHost() + ":" + apiPort
+    val host = WhiskProperties.getEdgeHost
+    val uri = Uri(host)
+    //Ensure that port is explicitly include in the returned URL
+    val absolute = if (uri.isAbsolute) {
+      uri.withPort(uri.effectivePort)
+    } else {
+      val apiPort = WhiskProperties.getEdgeHostApiPort
+      val protocol = if (apiPort == 443) "https" else "http"
+      Uri.from(scheme = protocol, host = host, port = apiPort)
+    }
+    absolute.toString()
   }
 
   /**
@@ -75,8 +91,8 @@ trait RestUtil {
 
     val body = Try { response.body().asString().parseJson.asJsObject }
     val schema = body map { _.fields("definitions").asJsObject }
-    val t = schema map { _.fields(model).asJsObject } getOrElse JsObject()
-    val d = JsObject("definitions" -> (schema getOrElse JsObject()))
+    val t = schema map { _.fields(model).asJsObject } getOrElse JsObject.empty
+    val d = JsObject("definitions" -> (schema getOrElse JsObject.empty))
     JsObject(t.fields ++ d.fields)
   }
 }

@@ -18,11 +18,11 @@
 
 #
 # Transforms environment variables starting with `prefix` to kebab-cased JVM system properties
-# 
+#
 # "_"           becomes "."
 # "camelCased"  becomes "camel-cased"
 # "PascalCased" stays   "PascalCased" -> classnames stay untouched
-# 
+#
 # Examples:
 # CONFIG_whisk_loadbalancer_invokerBusyThreshold -> -Dwhisk.loadbalancer.invoker-busy-threshold
 # CONFIG_akka_remote_netty_tcp_bindPort          -> -Dakka.remote.netty.tcp.bind-port
@@ -33,6 +33,19 @@ prefix="CONFIG_"
 configVariables=$(compgen -v | grep $prefix)
 
 props=()
+
+if [ -n "$OPENWHISK_CONFIG" ]; then
+    config="$OPENWHISK_CONFIG"
+elif [ -n "$OPENWHISK_ENCODED_CONFIG" ]; then
+    config=$(echo "$OPENWHISK_ENCODED_CONFIG" | base64 -d)
+fi
+
+if [ -n "$config" ]
+then
+    location="$HOME/config.conf"
+    printf "%s" "$config" > "$location"
+    props+=("-Dconfig.file='$location'")
+fi
 
 for var in $configVariables
 do

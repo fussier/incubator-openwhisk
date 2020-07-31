@@ -17,41 +17,38 @@
 
 package system.basic
 
+import common.rest.WskRestOperations
 import org.junit.runner.RunWith
 import org.scalatest.junit.JUnitRunner
+import common._
 
-import common.{BaseWsk, JsHelpers, TestHelpers, TestUtils, WskProps, WskTestHelpers}
-
-import whisk.utils.retry
-
-import scala.concurrent.duration._
+import spray.json._
+import spray.json.DefaultJsonProtocol._
 
 @RunWith(classOf[JUnitRunner])
-abstract class WskActivationTests extends TestHelpers with WskTestHelpers with JsHelpers {
-  implicit val wskprops = WskProps()
+class WskActivationTests extends TestHelpers with WskTestHelpers with WskActorSystem {
 
-  val wsk: BaseWsk
+  implicit val wskprops = WskProps()
+  val wsk: WskOperations = new WskRestOperations
 
   behavior of "Whisk activations"
 
-  it should "fetch logs using activation logs API" in withAssetCleaner(wskprops) { (wp, assetHelper) =>
-    val name = "logFetch"
-    val logFormat = "\\d+-\\d+-\\d+T\\d+:\\d+:\\d+.\\d+Z\\s+%s: %s"
+  it should "fetch result using activation result API" in withAssetCleaner(wskprops) { (wp, assetHelper) =>
+    val name = "hello"
+    val expectedResult = JsObject(
+      "result" -> JsObject("payload" -> "hello, undefined!".toJson),
+      "success" -> true.toJson,
+      "status" -> "success".toJson)
 
     assetHelper.withCleaner(wsk.action, name) { (action, _) =>
-      action.create(name, Some(TestUtils.getTestActionFilename("log.js")))
+      action.create(name, Some(TestUtils.getTestActionFilename("hello.js")))
     }
 
-    val run = wsk.action.invoke(name, blocking = true)
-
-    // Use withActivation() to reduce intermittent failures that may result from eventually consistent DBs
-    withActivation(wsk.activation, run) { activation =>
-      retry({
-        val logs = wsk.activation.logs(Some(activation.activationId)).stdout
-
-        logs should include regex (logFormat.format("stdout", "this is stdout"))
-        logs should include regex (logFormat.format("stderr", "this is stderr"))
-      }, 10, Some(1.second))
+    withActivation(wsk.activation, wsk.action.invoke(name)) { activation =>
+      val result = wsk.activation.result(Some(activation.activationId)).stdout.parseJson.asJsObject
+      //Remove size from comparison as its exact value may vary
+      val resultWithoutSize = JsObject(result.fields - "size")
+      resultWithoutSize shouldBe expectedResult
     }
   }
 }

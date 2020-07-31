@@ -21,9 +21,7 @@ import java.time.Instant
 
 import akka.http.scaladsl.model.StatusCodes.TooManyRequests
 
-import scala.collection.parallel.immutable.ParSeq
-import scala.concurrent.Future
-import scala.concurrent.Promise
+import scala.concurrent.{Await, Future, Promise}
 import scala.concurrent.duration._
 import org.junit.runner.RunWith
 import org.scalatest.BeforeAndAfterAll
@@ -31,20 +29,15 @@ import org.scalatest.FlatSpec
 import org.scalatest.Matchers
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.junit.JUnitRunner
-import common.RunWskAdminCmd
-import common.TestHelpers
-import common.TestUtils
+import common._
 import common.TestUtils._
-import common.WhiskProperties
-import common.rest.WskRest
-import common.WskActorSystem
-import common.WskProps
-import common.WskTestHelpers
+import common.rest.WskRestOperations
+import common.WskAdmin.wskadmin
 import spray.json._
 import spray.json.DefaultJsonProtocol._
-import whisk.http.Messages._
-import whisk.utils.ExecutionContextFactory
-import whisk.utils.retry
+import org.apache.openwhisk.http.Messages._
+import org.apache.openwhisk.utils.ExecutionContextFactory
+import org.apache.openwhisk.utils.retry
 
 import scala.util.{Success, Try}
 
@@ -67,7 +60,7 @@ class ThrottleTests
 
   implicit val testConfig = PatienceConfig(5.minutes)
   implicit val wskprops = WskProps()
-  val wsk = new WskRest
+  val wsk = new WskRestOperations
   val defaultAction = Some(TestUtils.getTestActionFilename("hello.js"))
 
   val throttleWindow = 1.minute
@@ -107,10 +100,15 @@ class ThrottleTests
    *
    * @param results the sequence of results from invocations or firings
    */
-  def waitForActivations(results: ParSeq[RunResult]) = results.foreach { result =>
-    if (result.exitCode == SUCCESS_EXIT) {
-      withActivation(wsk.activation, result, totalWait = 5.minutes)(identity)
+  def waitForActivations(results: Seq[RunResult]) = {
+    val done = results.map { result =>
+      if (result.exitCode == SUCCESS_EXIT) {
+        Future(withActivation(wsk.activation, result, totalWait = 5.minutes)(_ => ()))
+      } else {
+        Future.successful(())
+      }
     }
+    Await.result(Future.sequence(done), 5.minutes)
   }
 
   /**
@@ -206,7 +204,7 @@ class ThrottleTests
     // wait for the activations last, if these fail, the throttle should be settled
     // and this gives the activations time to complete and may avoid unnecessarily polling
     println("waiting for activations to complete")
-    waitForActivations(results.par)
+    waitForActivations(results)
   }
 
   it should "throttle multiple activations of one trigger" in withAssetCleaner(wskprops) { (wp, assetHelper) =>
@@ -291,7 +289,7 @@ class ThrottleTests
     // wait for the activations last, giving the activations time to complete and
     // may avoid unnecessarily polling; if these fail, the throttle may not be settled
     println("waiting for activations to complete")
-    waitForActivations(combinedResults.par)
+    waitForActivations(combinedResults)
   }
 }
 
@@ -300,14 +298,14 @@ class NamespaceSpecificThrottleTests
     extends FlatSpec
     with TestHelpers
     with WskTestHelpers
+    with WskActorSystem
     with Matchers
     with BeforeAndAfterAll
     with LocalHelper {
 
   val defaultAction = Some(TestUtils.getTestActionFilename("hello.js"))
 
-  val wskadmin = new RunWskAdminCmd {}
-  val wsk = new WskRest
+  val wsk = new WskRestOperations
 
   def sanitizeNamespaces(namespaces: Seq[String], expectedExitCode: Int = SUCCESS_EXIT): Unit = {
     val deletions = namespaces.map { ns =>
@@ -322,7 +320,7 @@ class NamespaceSpecificThrottleTests
   }
 
   sanitizeNamespaces(
-    Seq("zeroSubject", "zeroConcSubject", "oneSubject", "oneSequenceSubject"),
+    Seq("zeroSubject", "zeroConcSubject", "oneSubject", "oneSequenceSubject", "activationDisabled"),
     expectedExitCode = DONTCARE_EXIT)
 
   // Create a subject with rate limits == 0
@@ -351,8 +349,12 @@ class NamespaceSpecificThrottleTests
   val oneSequenceProps = getAdditionalTestSubject("oneSequenceSubject")
   wskadmin.cli(Seq("limits", "set", oneSequenceProps.namespace, "--invocationsPerMinute", "1", "--firesPerMinute", "1"))
 
+  // Create a subject where storing of activations in activationstore is disabled.
+  val activationDisabled = getAdditionalTestSubject("activationDisabled")
+  wskadmin.cli(Seq("limits", "set", activationDisabled.namespace, "--storeActivations", "false"))
+
   override def afterAll() = {
-    sanitizeNamespaces(Seq(zeroProps, zeroConcProps, oneProps, oneSequenceProps).map(_.namespace))
+    sanitizeNamespaces(Seq(zeroProps, zeroConcProps, oneProps, oneSequenceProps, activationDisabled).map(_.namespace))
   }
 
   behavior of "Namespace-specific throttles"
@@ -467,5 +469,25 @@ class NamespaceSpecificThrottleTests
     wsk.action.invoke(actionName, expectedExitCode = TooManyRequests.intValue).stderr should {
       include(prefix(tooManyConcurrentRequests(0, 0))) and include("allowed: 0")
     }
+  }
+
+  it should "not store an activation if disabled for this namespace" in withAssetCleaner(activationDisabled) {
+    (wp, assetHelper) =>
+      implicit val props = wp
+      val actionName = "activationDisabled"
+
+      assetHelper.withCleaner(wsk.action, actionName) { (action, _) =>
+        action.create(actionName, defaultAction)
+      }
+
+      val runResult = wsk.action.invoke(actionName)
+      val activationId = wsk.activation.extractActivationId(runResult)
+      withClue(s"did not find an activation id in '$runResult'") {
+        activationId shouldBe a[Some[_]]
+      }
+
+      val activation = wsk.activation.waitForActivation(activationId.get)
+
+      activation shouldBe 'Left
   }
 }

@@ -1,3 +1,21 @@
+<!--
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+-->
 # Conductor Actions
 
 Conductor actions make it possible to build and invoke a series of actions, similar to sequences. However, whereas the components of a sequence action must be specified before invoking the sequence, conductor actions can decide the series of actions to invoke at run time.
@@ -84,25 +102,25 @@ Blocking and non-blocking invocations are supported. As usual, a blocking invoca
 One invocation of the conductor action results in multiple activations, for instance:
 
 ```
-wsk action invoke quadruple -p value 3
+wsk action invoke tripleAndIncrement -p value 3
 ```
 ```
-ok: invoked /_/quadruple with id 4f91f9ed0d874aaa91f9ed0d87baaa07
+ok: invoked /_/tripleAndIncrement with id 4f91f9ed0d874aaa91f9ed0d87baaa07
 ```
 ```
 wsk activation list
 ```
-```
-activations
-fd89b99a90a1462a89b99a90a1d62a8e tripleAndIncrement
-eaec119273d94087ac119273d90087d0 increment
-3624ad829d4044afa4ad829d40e4af60 tripleAndIncrement
-a1f58ade9b1e4c26b58ade9b1e4c2614 triple
-3624ad829d4044afa4ad829d40e4af60 tripleAndIncrement
-4f91f9ed0d874aaa91f9ed0d87baaa07 tripleAndIncrement
-```
+<pre>
+Datetime            Activation ID                    Kind      Start Duration   Status   Entity
+2019-03-16 20:03:00 8690bc9904794c9390bc9904794c930e nodejs:6  warm  2ms        success  guest/tripleAndIncrement:0.0.1
+2019-03-16 20:02:59 7e76452bec32401db6452bec32001d68 nodejs:6  cold  32ms       success  guest/increment:0.0.1
+2019-03-16 20:02:59 097250ad10a24e1eb250ad10a23e1e96 nodejs:6  warm  2ms        success  guest/tripleAndIncrement:0.0.1
+2019-03-16 20:02:58 4991a50ed9ed4dc091a50ed9edddc0bb nodejs:6  cold  33ms       success  guest/triple:0.0.1
+2019-03-16 20:02:57 aee63124f3504aefa63124f3506aef8b nodejs:6  cold  34ms       success  guest/tripleAndIncrement:0.0.1
+2019-03-16 20:02:57 22da217c8e3a4b799a217c8e3a0b79c4 sequence  warm  3.46s      success  guest/tripleAndIncrement:0.0.1
+</pre>
 
-There are six activation records in this example, one matching the activation id returned on invocation (`4f91f9ed0d874aaa91f9ed0d87baaa07`) plus five additional records for activations _caused_ by this invocation. The _primary_ activation record is the last one in the list because it has the earliest start time.
+There are six activation records in this example, one matching the activation id returned on invocation (`22da217c8e3a4b799a217c8e3a0b79c4`) plus five additional records for activations _caused_ by this invocation. The _primary_ activation record is the last one in the list because it has the earliest start time.
 
 The five additional activations are:
 
@@ -227,19 +245,18 @@ If a secondary activation returns an error dictionary, the conductor action invo
 
 In a continuation dictionary, the _params_ field is optional and its value if present should be a dictionary. The _action_ field is optional and its value if present should be a string. The _state_ field is optional and its value if present should be a dictionary. If the value _v_ of the _params_ field is not a dictionary it is automatically boxed into dictionary `{ value: v }`. If the value _v_ of the _state_ field is not a dictionary it is automatically boxed into dictionary `{ state: v }`.
 
-If the _action_ field is defined in the output of the conductor action, the runtime attempts to convert its value (irrespective of its type) into the fully qualified name of an action and invoke this action (using the default namespace if necessary). There are four failure modes:
+If the _action_ field is defined in the output of the conductor action, the runtime attempts to convert its value (irrespective of its type) into the fully qualified name of an action and invoke this action (using the default namespace if necessary). The action name should be a fully qualified name, which is of the form `/namespace/package-name/action-name` or `/namespace/action-name`. Failure to specify a fully qualified name may result in ambiguity or even a parsing error. There are four failure modes:
 
 - parsing failure,
 - resolution failure,
 - entitlement check failure,
 - internal error (invocation failure or timeout).
 
-In any of the first three failure scenarios, the conductor action invocation ends with an _application error_ status code and an error message describing the reason for the failure. In the latter, the status code is _internal error_.
-The action name should be a fully qualified name, which is of the form `/namespace/package-name/action-name` or `/namespace/action-name`. Failure to specify a fully qualified name may result in ambiguity or even a parsing error that terminates the activation.
+In the last failure scenario, the conductor action invocation ends with an _internal error_ status code and an error message describing the reason for the failure.
 
-If there is no error, _action_ is invoked on the _params_ dictionary if specified (auto boxed if necessary) or if not on the empty dictionary.
+If there is no error, _action_ is invoked on the _params_ dictionary if specified (auto boxed if necessary) or if not on the empty dictionary. Upon completion of this invocation, the conductor action is activated again. The input dictionary for this activation is a combination of the output dictionary for the component action and the value of the _state_ field from the prior secondary conductor activation. Fields of the _state_ dictionary (auto boxed if necessary) are added to the output dictionary of the component activation, overriding values of existing fields if necessary.
 
-Upon completion of this invocation, the conductor action is activated again. The input dictionary for this activation is a combination of the output dictionary for the component action and the value of the _state_ field from the prior secondary conductor activation. Fields of the _state_ dictionary (auto boxed if necessary) are added to the output dictionary of the component activation, overriding values of existing fields if necessary.
+In the first three failures scenarios, the conductor action is activated again. The input dictionary for this activation is a combination of an error object with an error message describing the reason for the failure and the value of the _state_ field from the prior secondary conductor activation (as in the previous scenario).
 
 On the other hand, if the _action_ field is not defined in the output of the conductor action, the conductor action invocation ends. The output for the conductor action invocation is either the value of the _params_ field in the output dictionary of the last secondary activation if defined (auto boxed if necessary) or if absent the complete output dictionary.
 
@@ -249,6 +266,6 @@ There are limits on the number of component action activations and secondary con
 
 The maximum number _n_ of permitted component activations is equal to the maximum number of components in a sequence action. It is configured via the same configuration parameter. The maximum number of secondary conductor activations is _2n+1_.
 
-If either of these limits is exceeded, the conductor action invocation ends with an _application error_ status code and an error message describing the reason for the failure.
+If the maximum number of permitted component activations is exceeded the conductor action is activated again. The input dictionary for this activation is a combination of an error object with an error message describing the reason for the failure and the value of the _state_ field from the prior secondary conductor activation.
 
-
+If the maximum number of secondary conductor activations is exceeded, the conductor action invocation ends with an _application error_ status code and an error message describing the reason for the failure.

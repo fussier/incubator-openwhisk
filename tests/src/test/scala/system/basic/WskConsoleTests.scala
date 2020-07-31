@@ -29,11 +29,12 @@ import org.scalatest.junit.JUnitRunner
 
 import common.TestHelpers
 import common.TestUtils
-import common.BaseWsk
+import common.WskOperations
 import common.WskProps
 import common.WskTestHelpers
 import spray.json.DefaultJsonProtocol._
 import spray.json._
+import org.apache.openwhisk.core.entity.Annotations
 
 /**
  * Tests of the text console
@@ -42,7 +43,7 @@ import spray.json._
 abstract class WskConsoleTests extends TestHelpers with WskTestHelpers {
 
   implicit val wskprops = WskProps()
-  val wsk: BaseWsk
+  val wsk: WskOperations
   val guestNamespace = wskprops.namespace
 
   behavior of "Wsk Activation Console"
@@ -88,7 +89,10 @@ abstract class WskConsoleTests extends TestHelpers with WskTestHelpers {
   it should "show repeated activations" in withAssetCleaner(wskprops) { (wp, assetHelper) =>
     val name = withTimestamp("countdown")
     assetHelper.withCleaner(wsk.action, name) { (action, _) =>
-      action.create(name, Some(TestUtils.getTestActionFilename("countdown.js")))
+      action.create(
+        name,
+        Some(TestUtils.getTestActionFilename("countdown.js")),
+        annotations = Map(Annotations.ProvideApiKeyAnnotationName -> JsTrue))
     }
 
     val count = 3

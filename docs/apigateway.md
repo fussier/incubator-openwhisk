@@ -1,9 +1,27 @@
+<!--
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+-->
 # API Gateway
 
 OpenWhisk actions can benefit from being managed by API management.
 
 The API Gateway can act as a proxy to [Web Actions](webactions.md) and provides them with additional features including HTTP method routing , client id/secrets, rate limiting and CORS.
-For more information on API Gateway feature you can read the [api management documentation](https://github.com/apache/incubator-openwhisk-apigateway/blob/master/doc/v2/management_interface_v2.md)
+For more information on API Gateway feature you can read the [api management documentation](https://github.com/apache/openwhisk-apigateway/blob/master/doc/v2/management_interface_v2.md)
 
 
 ## Create APIs from OpenWhisk web actions using the CLI
@@ -197,7 +215,7 @@ ok: deleted API /club
 ```
 ### Changing the configuration
 
-You can edit the configuration file to configure API Gateway extensions such as disabling or enabling CORS, for more info on the format of the configuration file refer to the API Gateway [docs](https://github.com/apache/incubator-openwhisk-apigateway/blob/master/doc/v2/management_interface_v2.md#gateway-specific-extensions).
+You can edit the configuration file to configure API Gateway extensions such as disabling or enabling CORS, for more info on the format of the configuration file refer to the API Gateway [docs](https://github.com/apache/openwhisk-apigateway/blob/master/doc/v2/management_interface_v2.md#gateway-specific-extensions).
 
 ### Importing the configuration
 

@@ -22,7 +22,7 @@ import org.scalatest.junit.JUnitRunner
 import common.TestHelpers
 import common.TestUtils
 import common.TestUtils.RunResult
-import common.BaseWsk
+import common.WskOperations
 import common.WskProps
 import common.WskTestHelpers
 import common.RuleActivationResult
@@ -34,7 +34,7 @@ import java.time.Instant
 abstract class WskRuleTests extends TestHelpers with WskTestHelpers {
 
   implicit val wskprops = WskProps()
-  val wsk: BaseWsk
+  val wsk: WskOperations
   val defaultAction = TestUtils.getTestActionFilename("wc.js")
   val secondAction = TestUtils.getTestActionFilename("hello.js")
   val testString = "this is a test"
@@ -385,7 +385,7 @@ abstract class WskRuleTests extends TestHelpers with WskTestHelpers {
 
   def verifyRuleList(ruleListResult: RunResult, ruleNameEnable: String, ruleName: String) = {
     val ruleList = ruleListResult.stdout
-    val listOutput = ruleList.lines
+    val listOutput = ruleList.linesIterator
     listOutput.find(_.contains(ruleNameEnable)).get should (include(ruleNameEnable) and include("active"))
     listOutput.find(_.contains(ruleName)).get should (include(ruleName) and include("inactive"))
     ruleList should not include "Unknown"

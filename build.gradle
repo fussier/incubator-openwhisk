@@ -1,3 +1,20 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 buildscript {
     repositories {
         jcenter()
@@ -8,8 +25,10 @@ buildscript {
 }
 
 plugins {
-    id "com.gradle.build-scan" version "1.12.1"
+    id "com.gradle.build-scan" version "2.3"
+    id "org.scoverage" version "4.0.1" apply false
 }
+
 
 buildScan {
     termsOfServiceUrl = 'https://gradle.com/terms-of-service'
@@ -24,12 +43,41 @@ subprojects {
     group 'org.apache.openwhisk'
     version '1.0.0-SNAPSHOT'
 
+    pluginManager.withPlugin('scala') {
+        // Constraint all transitive akka-* dependencies to the one we want to use to avoid issues.
+        // List generated via
+        // ./gradlew :test:dependencies | grep -o 'akka-.*_' | cut -c 6- | rev | cut -c 2- | rev | sort -u
+        def cons = project.getDependencies().getConstraints()
+        def akka = ['akka-actor', 'akka-cluster', 'akka-cluster-metrics', 'akka-cluster-tools', 'akka-coordination',
+                    'akka-discovery', 'akka-distributed-data', 'akka-protobuf', 'akka-remote', 'akka-slf4j',
+                    'akka-stream', 'akka-stream-testkit', 'akka-testkit']
+        def akkaHttp = ['akka-http', 'akka-http-core', 'akka-http-spray-json', 'akka-http-testkit', 'akka-http-xml',
+                        'akka-parsing']
+
+        akka.forEach {
+            cons.add('compile', "com.typesafe.akka:${it}_${gradle.scala.depVersion}:${gradle.akka.version}")
+        }
+        akkaHttp.forEach {
+            cons.add('compile', "com.typesafe.akka:${it}_${gradle.scala.depVersion}:${gradle.akka_http.version}")
+        }
+    }
+
     afterEvaluate {
-        if (project.plugins.hasPlugin('application')
-                && project.plugins.hasPlugin('scala')) {
-            startScripts {
-                doLast {
-                    unixScript.text = configureUnixClasspath(unixScript)
+        if (project.plugins.hasPlugin('scala')) {
+            repositories {
+                mavenCentral()
+            }
+
+            tasks.withType(ScalaCompile) {
+                scalaCompileOptions.additionalParameters = gradle.scala.compileFlags
+                scalaCompileOptions.forkOptions.jvmArgs = ["-Xss2m"]
+            }
+
+            if (project.plugins.hasPlugin('application')) {
+                startScripts {
+                    doLast {
+                        unixScript.text = configureUnixClasspath(unixScript)
+                    }
                 }
             }
         }
@@ -43,6 +91,7 @@ subprojects {
             task testSourcesJar(type: Jar, dependsOn: testClasses) {
                 classifier = 'test-sources'
                 from sourceSets.test.allSource
+                exclude("logback-test.xml")
             }
 
             task testClassesJar(type: Jar, dependsOn: testClasses) {
@@ -68,9 +117,7 @@ subprojects {
                 enabled false
             }
 
-            configurations.archives.with {
-                artifacts.remove artifacts.find { it.archiveTask.is distZip }
-            }
+            configurations.archives.artifacts.removeAll {it.file =~ 'zip'}
         }
     }
 }
@@ -85,6 +132,8 @@ def configureUnixClasspath(File script) {
                 // Get original line and append it
                 // with the configuration directory.
                 original += ':$APP_HOME/ext-lib/*:$APP_HOME/config'
+                //Ensure classes comes first. Used to refer to instrumented classes for code coverage
+                original = original.replace('CLASSPATH=', 'CLASSPATH=$APP_HOME/classes:')
             }
         }
         .join('\n')

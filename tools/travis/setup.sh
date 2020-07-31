@@ -16,20 +16,35 @@
 # limitations under the License.
 #
 
-sudo gpasswd -a travis docker
-sudo -E bash -c 'echo '\''DOCKER_OPTS="-H tcp://0.0.0.0:4243 -H unix:///var/run/docker.sock --storage-driver=overlay --userns-remap=default"'\'' > /etc/default/docker'
-
-# Docker
-sudo apt-get -y update -qq
-sudo apt-get -o Dpkg::Options::="--force-confold" --force-yes -y install docker-engine=1.12.0-0~trusty
-sudo service docker restart
-echo "Docker Version:"
-docker version
-echo "Docker Info:"
-docker info
+# retries a command for five times and exits with the non-zero exit if even after
+# the retries the command did not succeed.
+function retry() {
+  local exitcode=0
+  for i in {1..5};
+  do
+    exitcode=0
+    "$@" && break || exitcode=$? && echo "$i. attempt failed. Will retry $((5-i)) more times!" && sleep 1;
+  done
+  if [ $exitcode -ne 0 ]; then
+    exit $exitcode
+  fi
+}
 
 # Python
 pip install --user couchdb
 
 # Ansible
-pip install --user ansible==2.4.2.0
+pip install --user ansible==2.5.2
+
+# Azure CosmosDB
+pip install --user pydocumentdb
+
+# Support the revises log upload script
+pip install --user humanize requests
+
+# Basic check that all code compiles and depdendencies are downloaded correctly.
+# Compiling the tests will compile all components as well.
+#
+# Downloads the gradle wrapper, dependencies and tries to compile the code.
+# Retried 5 times in case there are network hiccups.
+TERM=dumb retry ./gradlew :tests:compileTestScala

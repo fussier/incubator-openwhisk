@@ -22,35 +22,34 @@ import akka.http.scaladsl.model.StatusCodes.BadGateway
 import akka.http.scaladsl.model.StatusCodes.Conflict
 import akka.http.scaladsl.model.StatusCodes.Unauthorized
 import akka.http.scaladsl.model.StatusCodes.NotFound
-
 import java.time.Instant
 
 import scala.concurrent.duration.DurationInt
-
 import org.junit.runner.RunWith
 import org.scalatest.junit.JUnitRunner
-
-import common.TestHelpers
-import common.TestUtils
-import common.rest.WskRest
+import common._
+import common.rest.WskRestOperations
 import common.rest.RestResult
-import common.WskProps
-import common.WskTestHelpers
 import spray.json._
 import spray.json.DefaultJsonProtocol._
-import whisk.http.Messages
+import org.apache.openwhisk.core.containerpool.Container
+import org.apache.openwhisk.core.entity.Annotations
+import org.apache.openwhisk.http.Messages
 
 @RunWith(classOf[JUnitRunner])
-class WskRestBasicTests extends TestHelpers with WskTestHelpers {
+class WskRestBasicTests extends TestHelpers with WskTestHelpers with WskActorSystem {
 
-  implicit val wskprops: common.WskProps = WskProps()
-  val wsk: common.rest.WskRest = new WskRest
+  implicit def wskprops: WskProps = WskProps()
+  val wsk = new WskRestOperations
+
   val defaultAction: Some[String] = Some(TestUtils.getTestActionFilename("hello.js"))
+
+  val requireAPIKeyAnnotation = WhiskProperties.getBooleanProperty("whisk.feature.requireApiKeyAnnotation", true);
 
   /**
    * Retry operations that need to settle the controller cache
    */
-  def cacheRetry[T](fn: => T) = whisk.utils.retry(fn, 5, Some(1.second))
+  def cacheRetry[T](fn: => T) = org.apache.openwhisk.utils.retry(fn, 5, Some(1.second))
 
   behavior of "Wsk REST"
 
@@ -94,14 +93,15 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
       p.getField("version") shouldBe "0.0.2"
       p
     })
-    pack.getFieldJsValue("publish") shouldBe JsBoolean(true)
+    pack.getFieldJsValue("publish") shouldBe JsTrue
     pack.getFieldJsValue("parameters") shouldBe JsArray(JsObject("key" -> JsString("a"), "value" -> JsString("A")))
     val packageList = wsk.pkg.list()
-    val packages = packageList.getBodyListJsObject()
+    val packages = packageList.getBodyListJsObject
     packages.exists(pack => RestResult.getField(pack, "name") == name) shouldBe true
   }
 
   it should "create, and get a package summary" in withAssetCleaner(wskprops) { (wp, assetHelper) =>
+    val runtime = "nodejs:default"
     val packageName = "packageName"
     val actionName = "actionName"
     val packageAnnots = Map(
@@ -119,8 +119,12 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
       pkg.create(packageName, annotations = packageAnnots)
     }
 
-    wsk.action.create(packageName + "/" + actionName, defaultAction, annotations = actionAnnots)
-    val result = wsk.pkg.get(packageName)
+    wsk.action.create(packageName + "/" + actionName, defaultAction, annotations = actionAnnots, kind = Some(runtime))
+    val result = cacheRetry({
+      val p = wsk.pkg.get(packageName)
+      p.getFieldListJsObject("actions") should have size 1
+      p
+    })
     val ns = wsk.namespace.whois()
     wsk.action.delete(packageName + "/" + actionName)
 
@@ -136,15 +140,56 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
           JsObject("name" -> JsString("paramName2"), "description" -> JsString("Parameter description 2")))))
     val action = result.getFieldListJsObject("actions")(0)
     RestResult.getField(action, "name") shouldBe actionName
+
     val annoAction = RestResult.getFieldJsValue(action, "annotations")
-    annoAction shouldBe JsArray(
-      JsObject("key" -> JsString("description"), "value" -> JsString("Action description")),
-      JsObject(
-        "key" -> JsString("parameters"),
-        "value" -> JsArray(
-          JsObject("name" -> JsString("paramName1"), "description" -> JsString("Parameter description 1")),
-          JsObject("name" -> JsString("paramName2"), "description" -> JsString("Parameter description 2")))),
-      JsObject("key" -> JsString("exec"), "value" -> JsString("nodejs:6")))
+
+    // first we check the returned execution runtime for 'nodejs:*'
+    annoAction
+      .convertTo[Seq[JsObject]]
+      .find(_.fields("key").convertTo[String] == "exec")
+      .map(_.fields("value"))
+      .map(exec => { exec.convertTo[String] should startWith("nodejs:") })
+      .getOrElse(fail())
+
+    // since we checked it, we can remove the exec field from the annotations to make the following checks easier
+    val annoActionWithoutExec =
+      annoAction
+        .convertTo[Seq[JsObject]]
+        .filter(annotation => annotation.fields("key").convertTo[String] != "exec")
+        .toJson
+
+    annoActionWithoutExec shouldBe (if (requireAPIKeyAnnotation) {
+                                      JsArray(
+                                        JsObject(
+                                          "key" -> JsString("description"),
+                                          "value" -> JsString("Action description")),
+                                        JsObject(
+                                          "key" -> JsString("parameters"),
+                                          "value" -> JsArray(
+                                            JsObject(
+                                              "name" -> JsString("paramName1"),
+                                              "description" -> JsString("Parameter description 1")),
+                                            JsObject(
+                                              "name" -> JsString("paramName2"),
+                                              "description" -> JsString("Parameter description 2")))),
+                                        JsObject(
+                                          "key" -> Annotations.ProvideApiKeyAnnotationName.toJson,
+                                          "value" -> JsFalse))
+                                    } else {
+                                      JsArray(
+                                        JsObject(
+                                          "key" -> JsString("description"),
+                                          "value" -> JsString("Action description")),
+                                        JsObject(
+                                          "key" -> JsString("parameters"),
+                                          "value" -> JsArray(
+                                            JsObject(
+                                              "name" -> JsString("paramName1"),
+                                              "description" -> JsString("Parameter description 1")),
+                                            JsObject(
+                                              "name" -> JsString("paramName2"),
+                                              "description" -> JsString("Parameter description 2")))))
+                                    })
   }
 
   it should "create a package with a name that contains spaces" in withAssetCleaner(wskprops) { (wp, assetHelper) =>
@@ -174,8 +219,8 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
       result.getField("namespace") shouldBe ns
       result.getField("name") shouldBe name
       result.getField("version") shouldBe "0.0.1"
-      result.getFieldJsValue("publish") shouldBe JsBoolean(false)
-      result.getFieldJsValue("binding") shouldBe JsObject()
+      result.getFieldJsValue("publish") shouldBe JsFalse
+      result.getFieldJsValue("binding") shouldBe JsObject.empty
       result.getField("invalid") shouldBe ""
   }
 
@@ -231,9 +276,9 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
       a
     })
     action.getFieldJsValue("parameters") shouldBe JsArray(JsObject("key" -> JsString("b"), "value" -> JsString("B")))
-    action.getFieldJsValue("publish") shouldBe JsBoolean(false)
+    action.getFieldJsValue("publish") shouldBe JsFalse
     val actionList = wsk.action.list()
-    val actions = actionList.getBodyListJsObject()
+    val actions = actionList.getBodyListJsObject
     actions.exists(action => RestResult.getField(action, "name") == name) shouldBe true
   }
 
@@ -294,13 +339,13 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
           action.create(name, Some(TestUtils.getTestActionFilename("blackbox.zip")), kind = Some("native"))
       }
 
-      val run = wsk.action.invoke(name, Map())
+      val run = wsk.action.invoke(name, Map.empty)
       withActivation(wsk.activation, run) { activation =>
         activation.response.result shouldBe Some(JsObject("msg" -> "hello zip".toJson))
         activation.logs shouldBe defined
         val logs = activation.logs.get.toString
         logs should include("This is an example zip used with the docker skeleton action.")
-        logs should not include ("XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX")
+        logs should not include Container.ACTIVATION_LOG_SENTINEL
       }
   }
 
@@ -322,12 +367,13 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
   }
 
   it should "create an action, and get its individual fields" in withAssetCleaner(wskprops) {
+    val runtime = "nodejs:default"
     val name = "actionFields"
     val paramInput = Map("payload" -> "test".toJson)
 
     (wp, assetHelper) =>
       assetHelper.withCleaner(wsk.action, name) { (action, _) =>
-        action.create(name, defaultAction, parameters = paramInput)
+        action.create(name, defaultAction, parameters = paramInput, kind = Some(runtime))
       }
 
       val expectedParam = JsObject("payload" -> JsString("test"))
@@ -335,19 +381,39 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
       val result = wsk.action.get(name)
       result.getField("name") shouldBe name
       result.getField("namespace") shouldBe ns
-      result.getFieldJsValue("publish") shouldBe JsBoolean(false)
+      result.getFieldJsValue("publish") shouldBe JsFalse
       result.getField("version") shouldBe "0.0.1"
       val exec = result.getFieldJsObject("exec")
-      RestResult.getField(exec, "kind") shouldBe "nodejs:6"
+      RestResult.getField(exec, "kind") should startWith("nodejs:")
       RestResult.getField(exec, "code") should not be ""
       result.getFieldJsValue("parameters") shouldBe JsArray(
         JsObject("key" -> JsString("payload"), "value" -> JsString("test")))
-      result.getFieldJsValue("annotations") shouldBe JsArray(
-        JsObject("key" -> JsString("exec"), "value" -> JsString("nodejs:6")))
+
+      // first we check the returned execution runtime for 'nodejs:*'
+      result
+        .getFieldJsValue("annotations")
+        .convertTo[Seq[JsObject]]
+        .find(_.fields("key").convertTo[String] == "exec")
+        .map(_.fields("value"))
+        .map(exec => { exec.convertTo[String] should startWith("nodejs:") })
+        .getOrElse(fail())
+
+      // since we checked it, we can remove the exec field from the annotations to make the following checks easier
+      result
+        .getFieldJsValue("annotations")
+        .convertTo[Seq[JsObject]]
+        .filter(annotation => annotation.fields("key").convertTo[String] != "exec")
+        .toJson shouldBe (if (requireAPIKeyAnnotation) {
+                            JsArray(
+                              JsObject("key" -> Annotations.ProvideApiKeyAnnotationName.toJson, "value" -> JsFalse))
+                          } else {
+                            JsArray()
+                          })
       result.getFieldJsValue("limits") shouldBe JsObject(
         "timeout" -> JsNumber(60000),
         "memory" -> JsNumber(256),
-        "logs" -> JsNumber(10))
+        "logs" -> JsNumber(10),
+        "concurrency" -> JsNumber(1))
       result.getField("invalid") shouldBe ""
   }
 
@@ -424,6 +490,7 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
   }
 
   it should "create, and get an action summary" in withAssetCleaner(wskprops) { (wp, assetHelper) =>
+    val runtime = "nodejs:default"
     val name = "actionName"
     val annots = Map(
       "description" -> JsString("Action description"),
@@ -432,7 +499,7 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
         JsObject("name" -> JsString("paramName2"), "description" -> JsString("Parameter description 2"))))
 
     assetHelper.withCleaner(wsk.action, name) { (action, _) =>
-      action.create(name, defaultAction, annotations = annots)
+      action.create(name, defaultAction, annotations = annots, kind = Some(runtime))
     }
 
     val result = wsk.action.get(name, summary = true)
@@ -440,16 +507,53 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
 
     result.getField("name") shouldBe name
     result.getField("namespace") shouldBe ns
-    val annos = result.getFieldJsValue("annotations")
-    annos shouldBe JsArray(
-      JsObject("key" -> JsString("description"), "value" -> JsString("Action description")),
-      JsObject(
-        "key" -> JsString("parameters"),
-        "value" -> JsArray(
-          JsObject("name" -> JsString("paramName1"), "description" -> JsString("Parameter description 1")),
-          JsObject("name" -> JsString("paramName2"), "description" -> JsString("Parameter description 2")))),
-      JsObject("key" -> JsString("exec"), "value" -> JsString("nodejs:6")))
 
+    val annos = result.getFieldJsValue("annotations")
+
+    // first we check the returned execution runtime for 'nodejs:*'
+    annos
+      .convertTo[Seq[JsObject]]
+      .find(_.fields("key").convertTo[String] == "exec")
+      .map(_.fields("value"))
+      .map(exec => { exec.convertTo[String] should startWith("nodejs:") })
+      .getOrElse(fail())
+
+    // since we checked it, we can remove the exec field from the annotations to make the following checks easier
+    val annosWithoutExec =
+      annos.convertTo[Seq[JsObject]].filter(annotation => annotation.fields("key").convertTo[String] != "exec").toJson
+
+    annosWithoutExec shouldBe (if (requireAPIKeyAnnotation) {
+                                 JsArray(
+                                   JsObject(
+                                     "key" -> JsString("description"),
+                                     "value" -> JsString("Action description")),
+                                   JsObject(
+                                     "key" -> JsString("parameters"),
+                                     "value" -> JsArray(
+                                       JsObject(
+                                         "name" -> JsString("paramName1"),
+                                         "description" -> JsString("Parameter description 1")),
+                                       JsObject(
+                                         "name" -> JsString("paramName2"),
+                                         "description" -> JsString("Parameter description 2")))),
+                                   JsObject(
+                                     "key" -> Annotations.ProvideApiKeyAnnotationName.toJson,
+                                     "value" -> JsFalse))
+                               } else {
+                                 JsArray(
+                                   JsObject(
+                                     "key" -> JsString("description"),
+                                     "value" -> JsString("Action description")),
+                                   JsObject(
+                                     "key" -> JsString("parameters"),
+                                     "value" -> JsArray(
+                                       JsObject(
+                                         "name" -> JsString("paramName1"),
+                                         "description" -> JsString("Parameter description 1")),
+                                       JsObject(
+                                         "name" -> JsString("paramName2"),
+                                         "description" -> JsString("Parameter description 2")))))
+                               })
   }
 
   it should "create an action with a name that contains spaces" in withAssetCleaner(wskprops) { (wp, assetHelper) =>
@@ -471,7 +575,7 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
       }
 
       val result = wsk.action.invoke(name, blocking = true, result = true)
-      result.stdout.parseJson.asJsObject shouldBe JsObject()
+      result.stdout.parseJson.asJsObject shouldBe JsObject.empty
   }
 
   it should "create, and invoke an action that times out to ensure the proper response is received" in withAssetCleaner(
@@ -482,7 +586,6 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
     // Sleep time must be larger than 60 seconds to see the expected exit code
     // Set sleep time to a value smaller than allowedActionDuration to not raise a timeout
     val sleepTime = allowedActionDuration - 20.seconds
-    sleepTime should be >= 60.seconds
     val params = Map("sleepTimeInMs" -> sleepTime.toMillis.toJson)
     val res = assetHelper.withCleaner(wsk.action, name) { (action, _) =>
       action.create(name, Some(TestUtils.getTestActionFilename("sleep.js")), timeout = Some(allowedActionDuration))
@@ -497,7 +600,7 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
         action.create(name, None, docker = Some("fake-container"))
       }
 
-      wsk.action.get(name).stdout should not include (""""code"""")
+      wsk.action.get(name).stdout should not include """"code""""
   }
 
   behavior of "Wsk Trigger REST"
@@ -529,7 +632,7 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
       t
     })
     trigger.getFieldJsValue("parameters") shouldBe JsArray(JsObject("key" -> JsString("a"), "value" -> JsString("A")))
-    trigger.getFieldJsValue("publish") shouldBe JsBoolean(false)
+    trigger.getFieldJsValue("publish") shouldBe JsFalse
 
     val expectedRules = JsObject(
       ns + "/" + ruleName -> JsObject(
@@ -553,21 +656,21 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
         JsObject(
           "statusCode" -> JsNumber(0),
           "activationId" -> JsString(ruleActivationId),
-          "success" -> JsBoolean(true),
+          "success" -> JsTrue,
           "rule" -> JsString(ns + "/" + ruleName),
           "action" -> JsString(ns + "/" + actionName)))
       logs shouldBe expectedLogs
     }
 
-    val runWithNoParams = wsk.trigger.fire(triggerName, Map())
+    val runWithNoParams = wsk.trigger.fire(triggerName, Map.empty)
     withActivation(wsk.activation, runWithNoParams) { activation =>
-      activation.response.result shouldBe Some(JsObject())
+      activation.response.result shouldBe Some(JsObject.empty)
       activation.duration shouldBe 0L // shouldn't exist but CLI generates it
       activation.end shouldBe Instant.EPOCH // shouldn't exist but CLI generates it
     }
 
     val triggerList = wsk.trigger.list()
-    val triggers = triggerList.getBodyListJsObject()
+    val triggers = triggerList.getBodyListJsObject
     triggers.exists(trigger => RestResult.getField(trigger, "name") == triggerName) shouldBe true
   }
 
@@ -652,11 +755,11 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
       result.getField("namespace") shouldBe ns
       result.getField("name") shouldBe name
       result.getField("version") shouldBe "0.0.1"
-      result.getFieldJsValue("publish") shouldBe JsBoolean(false)
+      result.getFieldJsValue("publish") shouldBe JsFalse
       result.getFieldJsValue("annotations").toString shouldBe "[]"
       result.getFieldJsValue("parameters") shouldBe JsArray(
         JsObject("key" -> JsString("payload"), "value" -> JsString("test")))
-      result.getFieldJsValue("limits") shouldBe JsObject()
+      result.getFieldJsValue("limits") shouldBe JsObject.empty
       result.getField("invalid") shouldBe ""
   }
 
@@ -679,7 +782,7 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
 
     val run = wsk.trigger.fire(triggerName)
     withActivation(wsk.activation, run) { activation =>
-      activation.response.result shouldBe Some(JsObject())
+      activation.response.result shouldBe Some(JsObject.empty)
     }
   }
 
@@ -759,12 +862,12 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
           JsObject(
             "statusCode" -> JsNumber(0),
             "activationId" -> JsString(ruleActivationId),
-            "success" -> JsBoolean(true),
+            "success" -> JsTrue,
             "rule" -> JsString(ns + "/" + ruleName1),
             "action" -> JsString(ns + "/" + actionName1)),
           JsObject(
             "statusCode" -> JsNumber(1),
-            "success" -> JsBoolean(false),
+            "success" -> JsFalse,
             "error" -> JsString("The requested resource does not exist."),
             "rule" -> JsString(ns + "/" + ruleName2),
             "action" -> JsString(ns + "/" + actionName2)))
@@ -820,12 +923,12 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
           JsObject(
             "statusCode" -> JsNumber(0),
             "activationId" -> JsString(ruleActivationId),
-            "success" -> JsBoolean(true),
+            "success" -> JsTrue,
             "rule" -> JsString(ns + "/" + ruleName1),
             "action" -> JsString(ns + "/" + actionName1)),
           JsObject(
             "statusCode" -> JsNumber(1),
-            "success" -> JsBoolean(false),
+            "success" -> JsFalse,
             "error" -> JsString(Messages.triggerWithInactiveRule(s"$ns/$ruleName2", s"$ns/$actionName2")),
             "rule" -> JsString(ns + "/" + ruleName2),
             "action" -> JsString(ns + "/" + actionName2)))
@@ -862,7 +965,7 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
     rule.getField("name") shouldBe ruleName
     RestResult.getField(rule.getFieldJsObject("trigger"), "name") shouldBe triggerName
     RestResult.getField(rule.getFieldJsObject("action"), "name") shouldBe actionName
-    val rules = wsk.rule.list().getBodyListJsObject()
+    val rules = wsk.rule.list().getBodyListJsObject
     rules.exists { rule =>
       RestResult.getField(rule, "name") == ruleName
     } shouldBe true
@@ -938,9 +1041,9 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
       val result = wsk.rule.get(ruleName)
       val trigger = result.getFieldJsValue("trigger").toString
       trigger should include(triggerName)
-      trigger should not include (actionName)
+      trigger should not include actionName
       val action = result.getFieldJsValue("action").toString
-      action should not include (triggerName)
+      action should not include triggerName
       action should include(actionName)
   }
 
@@ -1001,7 +1104,7 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
 
   it should "return a list of exactly one namespace" in {
     val lines = wsk.namespace.list()
-    lines.getBodyListString().size shouldBe 1
+    lines.getBodyListString.size shouldBe 1
   }
 
   behavior of "Wsk Activation REST"
@@ -1031,12 +1134,12 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers {
       result.getField("namespace") shouldBe ns
       result.getField("name") shouldBe triggerName
       result.getField("version") shouldBe "0.0.1"
-      result.getFieldJsValue("publish") shouldBe JsBoolean(false)
+      result.getFieldJsValue("publish") shouldBe JsFalse
       result.getField("subject") shouldBe ns
       result.getField("activationId") shouldBe activation.activationId
-      result.getFieldJsValue("start").toString should not be JsObject().toString
-      result.getFieldJsValue("end").toString shouldBe JsObject().toString
-      result.getFieldJsValue("duration").toString shouldBe JsObject().toString
+      result.getFieldJsValue("start").toString should not be JsObject.empty.toString
+      result.getFieldJsValue("end").toString shouldBe JsObject.empty.toString
+      result.getFieldJsValue("duration").toString shouldBe JsObject.empty.toString
       result.getFieldListJsObject("annotations").length shouldBe 0
     }
   }

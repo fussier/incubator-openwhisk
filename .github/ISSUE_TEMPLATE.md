@@ -1,4 +1,6 @@
 <!--
+We use the issue tracker for bugs and feature requests. For general questions and discussion please use http://slack.openwhisk.org/ or https://openwhisk.apache.org/contact.html instead.
+
 Do NOT share passwords, credentials or other confidential information.
 
 Before creating a new issue, please check if there is one already open that
@@ -14,7 +16,7 @@ information shown below.
 If you are reporting an enhancement request, please include information on what you are trying to achieve and why that enhancement would help you.
 
 For more information about reporting issues, see
-https://github.com/apache/incubator-openwhisk/blob/master/CONTRIBUTING.md#raising-issues
+https://github.com/apache/openwhisk/blob/master/CONTRIBUTING.md#raising-issues
 
 Use the commands below to provide key information from your environment:
 You do not have to include this information if this is a feature request.
@@ -22,8 +24,8 @@ You do not have to include this information if this is a feature request.
 
 ## Environment details:
 
-* local deployment, vagrant, native ubuntu, Mac OS, Bluemix, ...   
-* version of docker, vagrant, ubuntu, ...
+* local deployment, native ubuntu, Mac OS, Kubernetes, ...
+* version of docker, ubuntu, ...
 
 ## Steps to reproduce the issue:
 

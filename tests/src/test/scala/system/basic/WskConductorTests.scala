@@ -19,39 +19,29 @@ package system.basic
 
 import scala.concurrent.duration.DurationInt
 import scala.language.postfixOps
-
 import org.junit.runner.RunWith
 import org.scalatest.junit.JUnitRunner
-
-import common.ActivationResult
-import common.StreamLogging
-import common.JsHelpers
-import common.TestHelpers
-import common.TestUtils
-import common.BaseWsk
-import common.WskProps
-import common.WskTestHelpers
-
+import common._
+import common.rest.WskRestOperations
 import spray.json._
 import spray.json.DefaultJsonProtocol._
-
-import whisk.core.entity.size.SizeInt
-import whisk.core.WhiskConfig
-import whisk.http.Messages._
+import org.apache.openwhisk.core.entity.size.SizeInt
+import org.apache.openwhisk.core.WhiskConfig
+import org.apache.openwhisk.http.Messages._
 
 @RunWith(classOf[JUnitRunner])
-abstract class WskConductorTests extends TestHelpers with WskTestHelpers with JsHelpers with StreamLogging {
+class WskConductorTests extends TestHelpers with WskTestHelpers with JsHelpers with StreamLogging with WskActorSystem {
 
   implicit val wskprops = WskProps()
-  val wsk: BaseWsk
+  val wsk: WskOperations = new WskRestOperations
+
   val allowedActionDuration = 120 seconds
 
   val testString = "this is a test"
   val invalid = "invalid#Action"
   val missing = "missingAction"
 
-  val whiskConfig = new WhiskConfig(Map(WhiskConfig.actionSequenceMaxLimit -> null))
-  assert(whiskConfig.isValid)
+  val whiskConfig = new WhiskConfig(Map(WhiskConfig.actionSequenceMaxLimit -> "50"))
   val limit = whiskConfig.actionSequenceLimit.toInt
 
   behavior of "Whisk conductor actions"
@@ -114,7 +104,7 @@ abstract class WskConductorTests extends TestHelpers with WskTestHelpers with Js
         activation.response.status shouldBe "application error"
         activation.response.result.get.fields.get("error") shouldBe Some(
           JsString(compositionComponentInvalid(JsString(invalid))))
-        checkConductorLogsAndAnnotations(activation, 1) // echo
+        checkConductorLogsAndAnnotations(activation, 2) // echo
       }
 
       // an undefined action
@@ -125,7 +115,7 @@ abstract class WskConductorTests extends TestHelpers with WskTestHelpers with Js
         activation.response.status shouldBe "application error"
         activation.response.result.get.fields.get("error") shouldBe Some(
           JsString(compositionComponentNotFound(s"$namespace/$missing")))
-        checkConductorLogsAndAnnotations(activation, 1) // echo
+        checkConductorLogsAndAnnotations(activation, 2) // echo
       }
   }
 
@@ -282,6 +272,76 @@ abstract class WskConductorTests extends TestHelpers with WskTestHelpers with Js
     }
   }
 
+  it should "invoke a conductor action in a package binding" in withAssetCleaner(wskprops) { (wp, assetHelper) =>
+    val ns = wsk.namespace.whois()
+    val actionName = "echo" // echo conductor action
+    val packageName = "package1"
+    val bindName = "package2"
+    val packageActionName = packageName + "/" + actionName
+    val bindActionName = bindName + "/" + actionName
+    val bindNameWithNamespace = ns + "/" + bindName
+
+    assetHelper.withCleaner(wsk.pkg, packageName) { (pkg, _) =>
+      pkg.create(packageName)
+    }
+    assetHelper.withCleaner(wsk.pkg, bindName) { (pkg, _) =>
+      pkg.bind(packageName, bindName)
+    }
+
+    assetHelper.withCleaner(wsk.action, packageActionName) { (action, _) =>
+      action.create(
+        packageActionName,
+        Some(TestUtils.getTestActionFilename("echo.js")),
+        annotations = Map("conductor" -> true.toJson))
+    }
+
+    // the conductor annotation should not affect the behavior of an action
+    // that returns a dictionary without a params or action field
+    val run = wsk.action.invoke(bindActionName, Map("payload" -> testString.toJson, "state" -> testString.toJson))
+    withActivation(wsk.activation, run) { activation =>
+      activation.response.status shouldBe "success"
+      activation.response.result shouldBe Some(JsObject("payload" -> testString.toJson, "state" -> testString.toJson))
+
+      val binding = activation.getAnnotationValue("binding")
+      binding shouldBe defined
+      binding.get shouldBe JsString(bindNameWithNamespace)
+
+      checkConductorLogsAndAnnotations(activation, 1) // echo
+    }
+
+    // the conductor annotation should not affect the behavior of an action that returns an error
+    val secondrun = wsk.action.invoke(bindActionName, Map("error" -> testString.toJson))
+    withActivation(wsk.activation, secondrun) { activation =>
+      activation.response.status shouldBe "application error"
+      activation.response.result shouldBe Some(JsObject("error" -> testString.toJson))
+
+      val binding = activation.getAnnotationValue("binding")
+      binding shouldBe defined
+      binding.get shouldBe JsString(bindNameWithNamespace)
+
+      checkConductorLogsAndAnnotations(activation, 1) // echo
+    }
+
+    // the controller should unwrap a wrapped result { params: result, ... } for an action with a conductor annotation
+    // discarding other fields if there is no action field
+    val thirdrun = wsk.action.invoke(
+      bindActionName,
+      Map(
+        "params" -> JsObject("payload" -> testString.toJson),
+        "result" -> testString.toJson,
+        "state" -> testString.toJson))
+    withActivation(wsk.activation, thirdrun) { activation =>
+      activation.response.status shouldBe "success"
+      activation.response.result shouldBe Some(JsObject("payload" -> testString.toJson))
+
+      val binding = activation.getAnnotationValue("binding")
+      binding shouldBe defined
+      binding.get shouldBe JsString(bindNameWithNamespace)
+
+      checkConductorLogsAndAnnotations(activation, 1) // echo
+    }
+  }
+
   /**
    * checks logs for the activation of a conductor action (length/size and ids)
    * checks that the cause field for nested invocations is set properly
@@ -304,6 +364,9 @@ abstract class WskConductorTests extends TestHelpers with WskTestHelpers with Js
         totalWait = allowedActionDuration) { componentActivation =>
         componentActivation.cause shouldBe defined
         componentActivation.cause.get shouldBe (activation.activationId)
+        // check waitTime
+        val waitTime = componentActivation.getAnnotationValue("waitTime")
+        waitTime shouldBe defined
         // check causedBy
         val causedBy = componentActivation.getAnnotationValue("causedBy")
         causedBy shouldBe defined

@@ -1,3 +1,21 @@
+<!--
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+-->
 # System overview
 
 OpenWhisk is an event-driven compute platform also referred to as Serverless computing or as Function as a Service (FaaS) that runs code in response to events or direct invocations. The following figure shows the high-level OpenWhisk architecture.
@@ -6,7 +24,7 @@ OpenWhisk is an event-driven compute platform also referred to as Serverless com
 
 Examples of events include changes to database records, IoT sensor readings that exceed a certain temperature, new code commits to a GitHub repository, or simple HTTP requests from web or mobile apps. Events from external and internal event sources are channeled through a trigger, and rules allow actions to react to these events.
 
-Actions can be small snippets of JavaScript or Swift code, or custom binary code embedded in a Docker container. Actions in OpenWhisk are instantly deployed and executed whenever a trigger fires. The more triggers fire, the more actions get invoked. If no trigger fires, no action code is running, so there is no cost.
+Actions can be small snippets of code (JavaScript, Swift and many other languages are supported), or custom binary code embedded in a Docker container. Actions in OpenWhisk are instantly deployed and executed whenever a trigger fires. The more triggers fire, the more actions get invoked. If no trigger fires, no action code is running, so there is no cost.
 
 In addition to associating actions with triggers, it is possible to directly invoke an action by using the OpenWhisk API, CLI, or iOS SDK. A set of actions can also be chained without having to write any code. Each action in the chain is invoked in sequence with the output of one action passed as input to the next in the sequence.
 
@@ -22,7 +40,7 @@ Being an open-source project, OpenWhisk stands on the shoulders of giants, inclu
 
 ## Creating the action
 
-To give the explanation a little bit of context, let’s create an action in the system first. We will use that action to explain the concepts later on while tracing through the system. The following commands assume that the [OpenWhisk CLI is setup properly](https://github.com/apache/incubator-openwhisk/blob/master/docs/cli.md).
+To give the explanation a little bit of context, let’s create an action in the system first. We will use that action to explain the concepts later on while tracing through the system. The following commands assume that the [OpenWhisk CLI is setup properly](https://github.com/apache/openwhisk/blob/master/docs/cli.md).
 
 First, we’ll create a file *action.js* containing the following code which will print “Hello World” to stdout and return a JSON object containing “world” under the key “hello”.
 ```
@@ -47,7 +65,7 @@ What actually happens behind the scenes in OpenWhisk?
 
 ### Entering the system: nginx
 
-First: OpenWhisk’s user-facing API is completely HTTP based and follows a RESTful design. As a consequence, the command sent via the wsk-CLI is essentially an HTTP request against the OpenWhisk system. The specific command above translates roughly to:
+First: OpenWhisk’s user-facing API is completely HTTP based and follows a RESTful design. As a consequence, the command sent via the `wsk` CLI is essentially an HTTP request against the OpenWhisk system. The specific command above translates roughly to:
 ```
 POST /api/v1/namespaces/$userNamespace/actions/myAction
 Host: $openwhiskEndpoint
@@ -102,13 +120,13 @@ Once Kafka has confirmed that it got the message, the HTTP request to the user i
 
 The **Invoker** is the heart of OpenWhisk. The Invoker’s duty is to invoke an action. It is also implemented in Scala. But there’s much more to it. To execute actions in an isolated and safe way it uses **Docker**.
 
-Docker is used to setup a new self-encapsulated environment (called *container*) for each action that we invoke in a fast, isolated and controlled way. In a nutshell, for each action invocation a Docker container is spawned, the action code gets injected, it gets executed using the parameters passed to it, the result is obtained, the container gets destroyed. This is also the place where a lot of performance optimization is done to reduce overhead and make low response times possible. 
+Docker is used to setup a new self-encapsulated environment (called *container*) for each action that we invoke in a fast, isolated and controlled way. In a nutshell, for each action invocation a Docker container is spawned, the action code gets injected, it gets executed using the parameters passed to it, the result is obtained, the container gets destroyed. This is also the place where a lot of performance optimization is done to reduce overhead and make low response times possible.
 
 In our specific case, as we’re having a *Node.js* based action at hand, the Invoker will start a Node.js container, inject the code from *myAction*, run it with no parameters, extract the result, save the logs and destroy the Node.js container again.
 
 ### Storing the results: CouchDB again
 
-As the result is obtained by the Invoker, it is stored into the **whisks** database as an activation under the ActivationId mentioned further above. The **whisks** database lives in **CouchDB**.
+As the result is obtained by the Invoker, it is stored into the **activations** database as an activation under the ActivationId mentioned further above. The **activations** database lives in **CouchDB**.
 
 In our specific case, the Invoker gets the resulting JSON object back from the action, grabs the log written by Docker, puts them all into the activation record and stores it into the database. It will look roughly like this:
 
